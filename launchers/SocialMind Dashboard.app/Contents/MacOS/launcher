@@ -1,0 +1,25 @@
+#!/bin/bash
+# Look for run-dashboard.sh in known locations.
+APP_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+CANDIDATES=(
+  "$APP_DIR/run-dashboard.sh"
+  "$HOME/Documents/ScoialMind-Dashboard/launchers/run-dashboard.sh"
+  "$HOME/Documents/socialmind-dashboard/launchers/run-dashboard.sh"
+)
+
+SCRIPT=""
+for c in "${CANDIDATES[@]}"; do
+  [ -f "$c" ] && SCRIPT="$c" && break
+done
+
+if [ -z "$SCRIPT" ]; then
+  osascript -e "display dialog \"Could not find SocialMind project.\nLooked for run-dashboard.sh in:\n${CANDIDATES[*]}\" buttons {\"OK\"} default button 1 with icon stop"
+  exit 1
+fi
+
+osascript <<EOF
+tell application "Terminal"
+  activate
+  do script "clear; bash '$SCRIPT'"
+end tell
+EOF

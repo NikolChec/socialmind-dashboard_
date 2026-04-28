@@ -1,0 +1,24 @@
+#!/bin/bash
+APP_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+CANDIDATES=(
+  "$APP_DIR/run-child.sh"
+  "$HOME/Documents/ScoialMind-Dashboard/launchers/run-child.sh"
+  "$HOME/Documents/socialmind-dashboard/launchers/run-child.sh"
+)
+
+SCRIPT=""
+for c in "${CANDIDATES[@]}"; do
+  [ -f "$c" ] && SCRIPT="$c" && break
+done
+
+if [ -z "$SCRIPT" ]; then
+  osascript -e "display dialog \"Could not find SocialMind project.\nLooked for run-child.sh in:\n${CANDIDATES[*]}\" buttons {\"OK\"} default button 1 with icon stop"
+  exit 1
+fi
+
+osascript <<EOF
+tell application "Terminal"
+  activate
+  do script "clear; bash '$SCRIPT'"
+end tell
+EOF
