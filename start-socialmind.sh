@@ -13,9 +13,26 @@ say() { echo -e "${GREEN}==>${RESET} $1"; }
 warn() { echo -e "${YELLOW}!! ${RESET} $1"; }
 fail() { echo -e "${RED}✖ ${RESET} $1"; exit 1; }
 
-# 1. Make sure Ollama is installed and running.
+# 1. Make sure Ollama is installed and running. Auto-install if missing.
 if ! command -v ollama >/dev/null 2>&1; then
-  fail "Ollama is not installed. Install with: brew install ollama"
+  warn "Ollama is not installed."
+  if command -v brew >/dev/null 2>&1; then
+    say "Installing Ollama via Homebrew (one-time, ~1-2 min)…"
+    brew install ollama || fail "Homebrew install of Ollama failed."
+  else
+    say "Homebrew not found. Installing Homebrew first (one-time, ~3-5 min)…"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+      || fail "Homebrew install failed. Install manually from https://brew.sh"
+    # Add brew to PATH for the rest of this script (Apple Silicon location).
+    if [ -x /opt/homebrew/bin/brew ]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -x /usr/local/bin/brew ]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
+    say "Installing Ollama…"
+    brew install ollama || fail "Ollama install failed."
+  fi
+  say "Ollama installed."
 fi
 
 if ! pgrep -x ollama >/dev/null; then
