@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+/* Hebrew: Heebo (matches the child app's font choice for visual consistency) */
+html[lang="he"], html[lang="he"] body, [dir="rtl"] {
+  font-family: 'Heebo', 'Arial Hebrew', 'David', sans-serif;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+}
+html[lang="he"] input, html[lang="he"] textarea, html[lang="he"] select, html[lang="he"] button {
+  font-family: inherit;
+}
+/* code / email / phone stay monospace regardless of language */
+html[lang="he"] code, html[lang="he"] .font-mono, code, .font-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+
+[dir="rtl"] .lucide,
+[dir="rtl"] .flip-rtl { transform: scaleX(-1); }

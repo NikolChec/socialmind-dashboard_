@@ -1,0 +1,25 @@
+{
+  "name": "socialmind",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend",
+    "seeds",
+    "SOCIALMIND-CHILD_APP"
+  ],
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm:dev -w backend\" \"npm:dev -w frontend\"",
+    "dev:all": "concurrently -n backend,frontend,child -c blue,green,magenta \"npm:dev -w backend\" \"npm:dev -w frontend\" \"npm:dev -w @socialmind/child-app\"",
+    "dev:backend": "npm run dev -w backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "dev:child": "npm run dev -w @socialmind/child-app",
+    "seed": "npm run seed -w seeds",
+    "build": "npm run build -w shared && npm run build -w backend && npm run build -w frontend && npm run build -w @socialmind/child-app"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  }
+}

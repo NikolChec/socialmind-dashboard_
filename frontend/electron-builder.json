@@ -1,0 +1,28 @@
+{
+  "appId": "org.socialmind.dashboard",
+  "productName": "SocialMind Dashboard",
+  "electronVersion": "33.2.0",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "mac": {
+    "category": "public.app-category.medical",
+    "icon": "build/icon.icns",
+    "target": [
+      { "target": "dmg", "arch": ["arm64"] },
+      { "target": "dir", "arch": ["arm64"] }
+    ],
+    "hardenedRuntime": false,
+    "gatekeeperAssess": false,
+    "identity": null
+  },
+  "dmg": {
+    "title": "SocialMind Dashboard",
+    "writeUpdateInfo": false
+  }
+}
