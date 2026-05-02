@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "seed": "tsx seed.ts"
+    "seed": "tsx seed.ts",
+    "seed:clean": "tsx reset-clean.ts"
   },
   "dependencies": {
     "@socialmind/shared": "*",

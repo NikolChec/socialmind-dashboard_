@@ -1,14 +1,19 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        ink: '#0a0e1a',
-        surface: '#0e1425',
-        card: '#121a2e',
-        line: '#1e293b',
-        muted: '#64748b',
+        // Semantic color tokens. Hex values below are the dark-theme defaults; when the
+        // root has `class="light"` the CSS in index.css remaps them to light equivalents
+        // via CSS variables.
+        ink: 'rgb(var(--ink) / <alpha-value>)',
+        surface: 'rgb(var(--surface) / <alpha-value>)',
+        card: 'rgb(var(--card) / <alpha-value>)',
+        line: 'rgb(var(--line) / <alpha-value>)',
+        muted: 'rgb(var(--muted) / <alpha-value>)',
+        elev: 'rgb(var(--elev) / <alpha-value>)',
         accent: '#6366f1',
         good: '#10b981',
         warn: '#f59e0b',

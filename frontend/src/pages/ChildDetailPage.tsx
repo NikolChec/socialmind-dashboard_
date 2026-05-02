@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import type { Alert, AuditEntry, Child, EscalationAction, ProgressPoint, RiskSnapshotPoint, ScenarioBreakdown, Session } from '@socialmind/shared';
+import type { Alert, Child, EscalationAction, ProgressPoint, RiskSnapshotPoint, ScenarioBreakdown, Session } from '@socialmind/shared';
 import { api } from '../lib/api';
 import { ProgressChart } from '../components/ProgressChart';
 import { RiskTrendChart } from '../components/RiskTrendChart';
@@ -11,13 +11,15 @@ import { ScenarioBreakdownList } from '../components/ScenarioBreakdown';
 import { AlertActionDialog, useEscalationLabel } from '../components/AlertActionDialog';
 import { SensitiveBadge } from '../components/SensitiveBadge';
 import { ScenarioQueuePanel } from '../components/ScenarioQueuePanel';
+import { ScenarioRequestsPanel } from '../components/ScenarioRequestsPanel';
+import { MissionRequestsPanel } from '../components/MissionRequestsPanel';
 import { ParentContactsPanel } from '../components/ParentContactsPanel';
 import { TranscriptSearchPanel } from '../components/TranscriptSearchPanel';
 import { ReportsPanel } from '../components/ReportsPanel';
-import { AuditList } from '../components/AuditList';
 import { formatDateTime, formatDuration, scenarioLabel, alertTypeLabel, timeAgo } from '../lib/format';
 import { AssistantPanel } from '../components/AssistantPanel';
 import { CompanionActivityPanel } from '../components/CompanionActivityPanel';
+import { HelperChatsPanel } from '../components/HelperChatsPanel';
 import { useAuth } from '../lib/auth';
 
 type ChildRow = Child & { psychologist_name: string; is_sensitive: boolean };
@@ -34,35 +36,38 @@ export function ChildDetailPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [breakdown, setBreakdown] = useState<ScenarioBreakdown[]>([]);
   const [riskHistory, setRiskHistory] = useState<RiskSnapshotPoint[]>([]);
-  const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [metric, setMetric] = useState<MetricKey>('success');
   const [loading, setLoading] = useState(true);
   const [ackAlert, setAckAlert] = useState<Alert | null>(null);
   const escalationLabel = useEscalationLabel();
   const isParent = user?.role === 'parent';
+  const isTeacher = user?.role === 'teacher';
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
+    // Per-call tolerance: teachers get 403 on some endpoints (alerts/audit) until the
+    // psychologist grants permission scopes — we don't want one failure to wedge the
+    // whole page into infinite loading.
+    const settle = <T,>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
     Promise.all([
-      api.child(id),
-      api.childSessions(id),
-      api.childProgress(id),
-      api.childAlerts(id),
-      api.childScenarioBreakdown(id),
-      api.childRiskHistory(id),
-      api.audit({ child_id: id, limit: 25 }),
-      api.children(),
+      settle(api.child(id), null as unknown as ChildRow),
+      settle(api.childSessions(id), [] as Session[]),
+      settle(api.childProgress(id), [] as ProgressPoint[]),
+      settle(api.childAlerts(id), [] as Alert[]),
+      settle(api.childScenarioBreakdown(id), [] as ScenarioBreakdown[]),
+      settle(api.childRiskHistory(id), [] as RiskSnapshotPoint[]),
+      settle(api.audit({ child_id: id, limit: 1 }).then(() => []), [] as never[]),
+      settle(api.children(), [] as Array<{ id: string; risk_score: number; risk_reasons: string[] }>),
     ])
-      .then(([c, s, p, a, b, rh, au, all]) => {
-        setChild(c);
+      .then(([c, s, p, a, b, rh, , all]) => {
+        if (c) setChild(c);
         setSessions(s);
         setProgress(p);
         setAlerts(a);
         setBreakdown(b);
         setRiskHistory(rh);
-        setAudit(au);
         setSelectedSession(s[0] ?? null);
         const me = all.find((x) => x.id === id);
         if (me) setSummary({ risk_score: me.risk_score, risk_reasons: me.risk_reasons });
@@ -110,6 +115,12 @@ export function ChildDetailPage() {
               {child.is_sensitive ? t('security.unmark_sensitive') : t('security.mark_sensitive')}
             </button>
           )}
+          <Link
+            to={`/children/${child.id}/child-app`}
+            className="ms-auto text-xs px-3 py-1.5 rounded-md bg-accent/15 hover:bg-accent/25 text-accent inline-flex items-center gap-1.5 border border-accent/30"
+          >
+            {t('childapp.open_link')}
+          </Link>
         </div>
         <div className="text-sm text-muted">
           {t('child.grade', { n: child.grade })} · {t('child.psychologist', { name: child.psychologist_name })}
@@ -167,14 +178,16 @@ export function ChildDetailPage() {
         </section>
       </div>
 
-      <section className="bg-card border border-line rounded-lg">
-        <header className="px-5 py-3 border-b border-line">
-          <h2 className="font-medium">{t('child.risk_trend_title')}</h2>
-        </header>
-        <div className="p-5">
-          <RiskTrendChart data={riskHistory} />
-        </div>
-      </section>
+      {!isTeacher && (
+        <section className="bg-card border border-line rounded-lg">
+          <header className="px-5 py-3 border-b border-line">
+            <h2 className="font-medium">{t('child.risk_trend_title')}</h2>
+          </header>
+          <div className="p-5">
+            <RiskTrendChart data={riskHistory} />
+          </div>
+        </section>
+      )}
 
       {isParent && (
         <div className="text-xs text-amber-300 bg-warn/10 border border-warn/30 rounded px-3 py-2">
@@ -182,10 +195,16 @@ export function ChildDetailPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ScenarioQueuePanel childId={child.id} readOnly={isParent} />
-        <ReportsPanel childId={child.id} />
-      </div>
+      {!isTeacher && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ScenarioQueuePanel childId={child.id} readOnly={isParent} />
+          <ReportsPanel childId={child.id} />
+        </div>
+      )}
+
+      {/* Teacher and parent request flows — submit + see status; psych/admin see all + approve/reject. */}
+      <ScenarioRequestsPanel childId={child.id} />
+      <MissionRequestsPanel childId={child.id} />
 
       <ParentContactsPanel childId={child.id} readOnly={isParent} />
 
@@ -288,18 +307,13 @@ export function ChildDetailPage() {
         )}
       </div>
 
-      <section className="bg-card border border-line rounded-lg">
-        <header className="px-5 py-3 border-b border-line">
-          <h2 className="font-medium">{t('child.activity_title')}</h2>
-        </header>
-        <div className="px-5 py-3">
-          <AuditList entries={audit} />
-        </div>
-      </section>
-
       <CompanionActivityPanel childId={child.id} childName={child.display_name} />
 
-      <AssistantPanel childId={child.id} childName={child.display_name} />
+      <HelperChatsPanel childId={child.id} />
+
+      {!isTeacher && (
+        <AssistantPanel childId={child.id} childName={child.display_name} />
+      )}
 
       {ackAlert && (
         <AlertActionDialog

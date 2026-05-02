@@ -10,13 +10,17 @@
   },
   "dependencies": {
     "@socialmind/shared": "*",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/nodemailer": "^8.0.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.5.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.1",
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^8.0.7",
     "pdfkit": "^0.15.2",
     "zod": "^3.23.8"
   },

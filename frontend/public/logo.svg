@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <!-- Rounded background tile so the logo reads on any surface -->
+  <rect width="256" height="256" rx="48" fill="#ffffff"/>
+  <g transform="translate(20 38)">
+    <!-- VR headset outer shell (outlined). The bottom curves up in the middle for the nose bridge. -->
+    <path d="
+      M 28 22
+      C 28 8, 42 0, 56 0
+      L 160 0
+      C 174 0, 188 8, 188 22
+      L 188 100
+      C 188 100, 188 118, 168 118
+      C 148 118, 138 132, 128 132
+      C 124 132, 122 128, 118 128
+      C 116 128, 114 130, 112 130
+      C 110 130, 108 128, 106 128
+      C 102 128, 100 132, 88 132
+      C 78 132, 68 118, 48 118
+      C 28 118, 28 100, 28 100
+      Z"
+      stroke="#5C7CFA" stroke-width="14" stroke-linejoin="round" fill="none"/>
+    <!-- Left side strap -->
+    <rect x="0" y="36" width="28" height="36" rx="8" fill="#5C7CFA"/>
+    <!-- Right side strap -->
+    <rect x="188" y="36" width="28" height="36" rx="8" fill="#5C7CFA"/>
+
+    <!-- Two figures inside (heads + bodies hugging) -->
+    <!-- Left figure head -->
+    <circle cx="78" cy="40" r="22" fill="#5C7CFA"/>
+    <!-- Right figure head -->
+    <circle cx="138" cy="40" r="22" fill="#5C7CFA"/>
+    <!-- Bodies forming a hug -->
+    <path d="
+      M 50 105
+      C 50 80, 64 68, 80 68
+      L 92 68
+      C 100 68, 104 74, 108 80
+      C 112 86, 116 88, 120 88
+      C 124 88, 128 86, 132 80
+      C 136 74, 140 68, 148 68
+      L 162 68
+      C 178 68, 188 80, 188 100
+      C 178 105, 168 110, 158 110
+      C 148 110, 144 105, 140 102
+      C 130 95, 124 96, 118 100
+      C 112 104, 106 105, 96 105
+      C 80 105, 65 105, 50 105
+      Z"
+      fill="#5C7CFA"/>
+    <!-- Heart between the figures -->
+    <path d="
+      M 156 92
+      C 156 87, 160 84, 164 84
+      C 167 84, 170 86, 171 89
+      C 172 86, 175 84, 178 84
+      C 182 84, 186 87, 186 92
+      C 186 99, 171 108, 171 108
+      C 171 108, 156 99, 156 92
+      Z" fill="#ffffff"/>
+  </g>
+</svg>

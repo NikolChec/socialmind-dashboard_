@@ -6,9 +6,12 @@ import { formatDate } from '../lib/format';
 
 const METHODS: ContactMethod[] = ['phone', 'sms', 'email', 'in_person', 'video', 'other'];
 
+type Guardian = { id: string; name: string; email: string; phone: string | null; rel: 'parent' | 'psychologist' | 'teacher' };
+
 export function ParentContactsPanel({ childId, readOnly = false }: { childId: string; readOnly?: boolean }) {
   const { t } = useTranslation();
   const [items, setItems] = useState<ParentContact[]>([]);
+  const [guardians, setGuardians] = useState<Guardian[]>([]);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
     contacted_at: new Date().toISOString().slice(0, 10),
@@ -22,6 +25,7 @@ export function ParentContactsPanel({ childId, readOnly = false }: { childId: st
 
   useEffect(() => {
     api.contacts(childId).then(setItems);
+    api.childGuardians(childId).then(setGuardians).catch(() => setGuardians([]));
   }, [childId]);
 
   async function submit() {
@@ -62,6 +66,29 @@ export function ParentContactsPanel({ childId, readOnly = false }: { childId: st
           </button>
         )}
       </header>
+      {guardians.length > 0 && (
+        <div className="px-5 py-3 border-b border-line bg-ink/30">
+          <div className="text-xs uppercase tracking-wider text-muted mb-2">{t('child.contacts_directory') || 'Directory'}</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {guardians.map((g) => (
+              <div key={g.id} className="rounded border border-line bg-card/60 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-slate-100 font-medium truncate">{g.name}</span>
+                  <span className="text-[10px] uppercase tracking-wider text-muted">{g.rel}</span>
+                </div>
+                <div className="mt-0.5 text-xs text-slate-300">
+                  <a href={`mailto:${g.email}`} className="hover:underline break-all">{g.email}</a>
+                </div>
+                {g.phone && (
+                  <div className="text-xs text-slate-300">
+                    <a href={`tel:${g.phone}`} className="hover:underline">{g.phone}</a>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {open && (
         <div className="p-5 border-b border-line space-y-3 bg-ink/50">
           <div className="grid grid-cols-2 gap-3">
