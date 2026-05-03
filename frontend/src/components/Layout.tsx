@@ -1,8 +1,8 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  LayoutDashboard, Users, Bell, Sparkles, FileText, ShieldCheck, LogOut,
+  LayoutDashboard, Users, Bell, Sparkles, FileText, ShieldCheck, LogOut, Sun, Moon,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -20,10 +20,23 @@ export function Layout() {
   const roleLabel =
     user?.role === 'school_admin' ? t('auth.role_admin')
     : user?.role === 'parent' ? t('auth.role_parent')
+    : user?.role === 'teacher' ? t('auth.role_teacher')
     : t('auth.role_psychologist');
 
   const isAdmin = user?.role === 'school_admin';
   const isParent = user?.role === 'parent';
+
+  // Light/dark theme. Persist on localStorage; default = dark.
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const stored = typeof window !== 'undefined' ? localStorage.getItem('socialmind.theme') : null;
+    return stored === 'light' ? 'light' : 'dark';
+  });
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'light') root.classList.add('light');
+    else root.classList.remove('light');
+    localStorage.setItem('socialmind.theme', theme);
+  }, [theme]);
 
   return (
     <div className="h-full flex flex-col">
@@ -50,6 +63,13 @@ export function Layout() {
             )}
           </nav>
           <div className="ms-auto flex items-center gap-3 text-sm">
+            <button
+              onClick={() => setTheme((v) => (v === 'dark' ? 'light' : 'dark'))}
+              title={theme === 'dark' ? t('common.theme_light') : t('common.theme_dark')}
+              className="size-8 grid place-items-center rounded-md border border-line text-slate-300 hover:bg-white/5"
+            >
+              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
             <LanguageSwitcher />
             <div className="text-end hidden sm:block">
               <div className="text-slate-100 font-medium leading-tight">{user?.name}</div>

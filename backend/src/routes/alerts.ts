@@ -31,10 +31,23 @@ alertsRouter.get('/', (req, res) => {
     FROM alerts a JOIN children c ON c.id = a.child_id
   `;
   let scope: string;
-  let param: string;
-  if (role === 'school_admin') { scope = `WHERE c.school_id = ?`; param = school_id; }
-  else if (role === 'psychologist') { scope = `WHERE c.psychologist_id = ?`; param = id; }
-  else { scope = `WHERE c.id IN (SELECT child_id FROM child_parents WHERE parent_id = ?)`; param = id; }
+  const params: unknown[] = [];
+  if (role === 'school_admin') {
+    scope = `WHERE c.school_id = ?`;
+    params.push(school_id);
+  } else if (role === 'psychologist') {
+    scope = `WHERE (c.psychologist_id = ? OR c.id IN (SELECT child_id FROM child_psychologists WHERE psychologist_id = ?))`;
+    params.push(id, id);
+  } else if (role === 'teacher') {
+    // Teachers only see alerts for children where they have an approved 'alerts' or 'full' permission.
+    scope = `WHERE c.id IN (SELECT child_id FROM child_teachers WHERE teacher_id = ?)
+             AND c.id IN (SELECT child_id FROM permission_requests
+                          WHERE teacher_id = ? AND status = 'approved' AND scope IN ('alerts','full'))`;
+    params.push(id, id);
+  } else {
+    scope = `WHERE c.id IN (SELECT child_id FROM child_parents WHERE parent_id = ?)`;
+    params.push(id);
+  }
 
   const ackFilter = onlyUnack ? ` AND a.acknowledged_at IS NULL` : '';
   const order = `
@@ -42,13 +55,13 @@ alertsRouter.get('/', (req, res) => {
              CASE a.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
              a.created_at DESC
   `;
-  const rows = db.prepare(`${base} ${scope} ${ackFilter} ${order}`).all(param);
+  const rows = db.prepare(`${base} ${scope} ${ackFilter} ${order}`).all(...params);
   res.json(rows);
 });
 
 alertsRouter.post('/:id/acknowledge', (req, res) => {
   const { id: userId, role, school_id } = req.auth!;
-  if (role === 'parent') return res.status(403).json({ error: 'read_only' });
+  if (role === 'parent' || role === 'teacher') return res.status(403).json({ error: 'read_only' });
   const alertId = req.params.id;
 
   const parsed = ackSchema.safeParse(req.body ?? {});
@@ -63,8 +76,19 @@ alertsRouter.post('/:id/acknowledge', (req, res) => {
     | { id: string; priority: string; psychologist_id: string; school_id: string }
     | undefined;
   if (!row) return res.status(404).json({ error: 'not_found' });
-  const allowed =
-    role === 'school_admin' ? row.school_id === school_id : row.psychologist_id === userId;
+  let allowed = false;
+  if (role === 'school_admin') {
+    allowed = row.school_id === school_id;
+  } else if (role === 'psychologist') {
+    if (row.psychologist_id === userId) allowed = true;
+    else {
+      const linked = db.prepare(
+        `SELECT 1 FROM child_psychologists cp JOIN alerts a ON a.child_id = cp.child_id
+         WHERE a.id = ? AND cp.psychologist_id = ?`
+      ).get(alertId, userId);
+      allowed = !!linked;
+    }
+  }
   if (!allowed) return res.status(403).json({ error: 'forbidden' });
 
   if (row.priority === 'high' && !parsed.data.action_taken) {

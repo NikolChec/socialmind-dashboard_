@@ -26,7 +26,36 @@ export type ScenarioType =
 
 export type Speaker = 'ai' | 'child';
 
-export type Role = 'school_admin' | 'psychologist' | 'parent';
+export type Role = 'school_admin' | 'psychologist' | 'parent' | 'teacher';
+
+export const MAX_PARENTS_PER_CHILD = 2;
+export const MAX_PSYCHOLOGISTS_PER_CHILD = 2;
+
+export type PermissionScope = 'helper_chats' | 'alerts' | 'sessions' | 'missions' | 'full';
+export type PermissionStatus = 'pending' | 'approved' | 'denied';
+
+export interface PermissionRequest {
+  id: UUID;
+  teacher_id: UUID;
+  teacher_name: string;
+  child_id: UUID;
+  child_name: string;
+  scope: PermissionScope;
+  reason: string;
+  status: PermissionStatus;
+  requested_at: ISODate;
+  resolved_at: ISODate | null;
+  resolved_by: UUID | null;
+  resolved_by_name: string | null;
+  resolved_note: string | null;
+}
+
+export interface LinkedUserRow {
+  id: UUID;
+  name: string;
+  email: string;
+  phone: string | null;
+}
 
 export interface School {
   id: UUID;
@@ -47,6 +76,13 @@ export interface User {
 export interface AdminUserRow extends User {
   linked_child_ids: UUID[];
   linked_child_names: string[];
+  two_factor_enabled: boolean;
+  two_factor_email: string | null;
+}
+
+export interface HelperChatMessageInput {
+  content: string;
+  private_from_parents?: boolean;
 }
 
 export interface Child {
@@ -59,6 +95,10 @@ export interface Child {
   notes: string;
   is_sensitive: boolean;
   created_at: ISODate;
+  username?: string | null;
+  preferred_lang?: string | null;
+  two_factor_enabled?: boolean;
+  two_factor_email?: string | null;
 }
 
 export interface TranscriptLine {
@@ -294,6 +334,63 @@ export interface ChildMission {
   child_reflection: string | null;
 }
 
+export interface ChildMissionWithMeta extends ChildMission {
+  assigned_by: UUID | null;
+  assigned_by_name: string | null;
+  source: 'auto' | 'psychologist' | 'parent_request';
+  private_from_parents: boolean;
+}
+
+export interface NewMissionInput {
+  title: string;
+  description: string;
+  difficulty: MissionDifficulty;
+  xp: number;
+  due_date?: ISODate | null;
+}
+
+export type MissionRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export interface MissionRequest {
+  id: UUID;
+  child_id: UUID;
+  child_name: string;
+  parent_id: UUID;
+  parent_name: string;
+  title: string;
+  description: string;
+  difficulty: MissionDifficulty;
+  xp: number;
+  status: MissionRequestStatus;
+  psych_note: string | null;
+  decided_by: UUID | null;
+  decided_by_name: string | null;
+  decided_at: ISODate | null;
+  resulting_mission_id: UUID | null;
+  created_at: ISODate;
+  requester_role: 'parent' | 'teacher';
+}
+
+export type ScenarioRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ScenarioQueueRequest {
+  id: UUID;
+  child_id: UUID;
+  child_name: string;
+  requester_id: UUID;
+  requester_name: string;
+  requester_role: 'parent' | 'teacher';
+  scenario: ScenarioType;
+  notes: string;
+  status: ScenarioRequestStatus;
+  decided_by: UUID | null;
+  decided_by_name: string | null;
+  decided_at: ISODate | null;
+  decision_note: string | null;
+  resulting_queue_id: UUID | null;
+  created_at: ISODate;
+}
+
 export type ChildAppEventType =
   | 'login'
   | 'mission_completed'
@@ -329,4 +426,32 @@ export interface CompanionActivitySummary {
     created_at: ISODate;
   }>;
   recent_events: ChildAppEvent[];
+}
+
+export type SafetySeverity = 'safe' | 'low' | 'medium' | 'high' | 'critical';
+
+export interface HelperMessageFlags {
+  severity: SafetySeverity;
+  categories: string[];
+  phrases: string[];
+}
+
+export interface HelperChatMessage {
+  id: UUID;
+  role: 'child' | 'helper';
+  content: string;
+  flags: HelperMessageFlags | null;
+  created_at: ISODate;
+}
+
+export interface HelperChatSession {
+  started_at: ISODate;
+  ended_at: ISODate;
+  flags: { severity: SafetySeverity; categories: string[] };
+  messages: HelperChatMessage[];
+}
+
+export interface HelperChatLog {
+  child_name: string;
+  sessions: HelperChatSession[];
 }

@@ -5,6 +5,7 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ChildrenListPage } from './pages/ChildrenListPage';
 import { ChildDetailPage } from './pages/ChildDetailPage';
+import { ChildAppPage } from './pages/ChildAppPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { AssistantPage } from './pages/AssistantPage';
 import { AuditPage } from './pages/AuditPage';
@@ -32,6 +33,7 @@ export function App() {
           <Route path="/" element={<HomeRedirect />} />
           <Route path="/children" element={<ChildrenListPage />} />
           <Route path="/children/:id" element={<ChildDetailPage />} />
+          <Route path="/children/:id/child-app" element={<ChildAppPage />} />
           <Route path="/alerts" element={<AlertsPage />} />
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/audit" element={<AuditPage />} />

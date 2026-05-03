@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { initSchema } from './db/schema.js';
 import { authRouter } from './routes/auth.js';
@@ -15,7 +16,9 @@ import { auditRouter } from './routes/audit.js';
 import { reportsRouter } from './routes/reports.js';
 import { streamRouter } from './routes/stream.js';
 import { adminRouter } from './routes/admin.js';
+import { teacherRouter } from './routes/teacher.js';
 import { childRouter } from './routes/child.js';
+import { convaiRouter } from './routes/convai.js';
 import { isStubbed } from './services/notifications.js';
 
 initSchema();
@@ -26,10 +29,18 @@ app.set('trust proxy', 1);
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const isDev = process.env.NODE_ENV !== 'production';
+// Capacitor / Cordova mobile apps use these origins; always allow them (no CSRF risk for native).
+const NATIVE_APP_ORIGINS = new Set([
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost',
+  'https://localhost',
+]);
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);
+    if (NATIVE_APP_ORIGINS.has(origin)) return cb(null, true);
     // Dev mode: permissive — accept any origin so demos via ngrok / LAN / etc. work out of the box.
     if (isDev) return cb(null, true);
     return cb(new Error(`origin_not_allowed: ${origin}`));
@@ -44,6 +55,7 @@ app.use(helmet({
 }));
 
 app.use(express.json({ limit: '4mb' }));
+app.use(cookieParser());
 
 const globalLimiter = rateLimit({
   windowMs: 60_000,
@@ -73,7 +85,9 @@ app.use('/api/audit', auditRouter);
 app.use('/api/reports', reportLimiter, reportsRouter);
 app.use('/api/stream', streamRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/teacher', teacherRouter);
 app.use('/api/child', childRouter);
+app.use('/api/convai', convaiRouter);
 
 const PORT = Number(process.env.PORT || 4000);
 app.listen(PORT, () => {

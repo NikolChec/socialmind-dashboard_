@@ -9,6 +9,34 @@ interface Props {
   childName?: string;
 }
 
+function typewriteAssistant(
+  fullText: string,
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+  onTick: () => void,
+) {
+  const TICK_MS = 18;
+  let i = 0;
+  // Start with an empty assistant message; we splice the text in.
+  setMessages((m) => [...m, { role: 'assistant', content: '' }]);
+  const timer = setInterval(() => {
+    if (i >= fullText.length) {
+      clearInterval(timer);
+      return;
+    }
+    const remaining = fullText.length - i;
+    const step = remaining > 200 ? 5 : remaining > 60 ? 2 : 1;
+    const next = fullText.slice(0, i + step);
+    i += step;
+    setMessages((m) => {
+      const copy = m.slice();
+      const last = copy[copy.length - 1];
+      if (last && last.role === 'assistant') copy[copy.length - 1] = { role: 'assistant', content: next };
+      return copy;
+    });
+    onTick();
+  }, TICK_MS);
+}
+
 export function AssistantPanel({ childId, childName }: Props) {
   const { t } = useTranslation();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -27,12 +55,16 @@ export function AssistantPanel({ childId, childName }: Props) {
     setLoading(true);
     try {
       const res = await api.assistantChat(next, childId);
-      setMessages((m) => [...m, { role: 'assistant', content: res.reply }]);
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }));
+      // Letter-by-letter typewriter — same feel as the child-app helper. We already have
+      // the full reply, so we just splice characters into the latest message at a fixed
+      // cadence. Speeds up if the buffer is long so a wall-of-text doesn't feel sluggish.
+      setLoading(false);
+      typewriteAssistant(res.reply, setMessages, () =>
+        requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }))
+      );
     } catch (e) {
       const body = (e as { body?: { hint?: string; detail?: string } }).body;
       setError(body?.hint || body?.detail || t('assistant.unavailable'));
-    } finally {
       setLoading(false);
     }
   }

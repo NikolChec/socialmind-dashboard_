@@ -2,10 +2,18 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import type { AuthUser } from '@socialmind/shared';
 import { api, getToken, setToken } from './api';
 
+export interface OtpChallenge {
+  otp_token: string;
+  email_hint: string;
+  delivered: boolean;
+}
+
 interface AuthCtx {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** Returns null when login completed; returns a challenge when 2FA is required. */
+  login: (email: string, password: string) => Promise<OtpChallenge | null>;
+  verifyOtp: (otp_token: string, code: string, trust_device: boolean) => Promise<void>;
   logout: () => void;
 }
 
@@ -24,8 +32,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  async function login(email: string, password: string) {
+  async function login(email: string, password: string): Promise<OtpChallenge | null> {
     const res = await api.login(email, password);
+    if ('requires_2fa' in res) {
+      return { otp_token: res.otp_token, email_hint: res.email_hint, delivered: res.delivered };
+    }
+    setToken(res.token);
+    setUser(res.user);
+    return null;
+  }
+
+  async function verifyOtp(otp_token: string, code: string, trust_device: boolean) {
+    const res = await api.verifyOtp(otp_token, code, trust_device);
     setToken(res.token);
     setUser(res.user);
   }
@@ -36,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }
 
-  return <Ctx.Provider value={{ user, loading, login, logout }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, loading, login, verifyOtp, logout }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth() {

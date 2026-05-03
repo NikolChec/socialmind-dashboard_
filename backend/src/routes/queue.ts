@@ -31,7 +31,7 @@ queueRouter.get('/:childId', (req, res) => {
 
 queueRouter.post('/:childId', (req, res) => {
   const { id: userId, role } = req.auth!;
-  if (role === 'parent') return res.status(403).json({ error: 'read_only' });
+  if (role === 'parent' || role === 'teacher') return res.status(403).json({ error: 'read_only' });
   const { childId } = req.params;
   if (!psychologistCanAccessChild(userId, childId, role)) return res.status(403).json({ error: 'forbidden' });
   const parsed = addSchema.safeParse(req.body);
@@ -50,7 +50,7 @@ queueRouter.post('/:childId', (req, res) => {
 
 queueRouter.delete('/:childId/:itemId', (req, res) => {
   const { id: userId, role } = req.auth!;
-  if (role === 'parent') return res.status(403).json({ error: 'read_only' });
+  if (role === 'parent' || role === 'teacher') return res.status(403).json({ error: 'read_only' });
   const { childId, itemId } = req.params;
   if (!psychologistCanAccessChild(userId, childId, role)) return res.status(403).json({ error: 'forbidden' });
   const row = db.prepare(`SELECT scenario FROM scenario_queue WHERE id = ? AND child_id = ?`).get(itemId, childId) as { scenario: string } | undefined;

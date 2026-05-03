@@ -37,7 +37,16 @@ export function computeChildrenForScope(scope: { role: string; userId: string; s
       ? db.prepare(
           `SELECT c.*, u.name AS psychologist_name
            FROM children c JOIN users u ON u.id = c.psychologist_id
-           WHERE c.psychologist_id = ? ORDER BY c.display_name`
+           WHERE c.psychologist_id = ?
+              OR c.id IN (SELECT child_id FROM child_psychologists WHERE psychologist_id = ?)
+           ORDER BY c.display_name`
+        ).all(userId, userId)
+      : role === 'teacher'
+      ? db.prepare(
+          `SELECT c.*, u.name AS psychologist_name
+           FROM children c JOIN users u ON u.id = c.psychologist_id
+           WHERE c.id IN (SELECT child_id FROM child_teachers WHERE teacher_id = ?)
+           ORDER BY c.display_name`
         ).all(userId)
       : db.prepare(
           `SELECT c.*, u.name AS psychologist_name

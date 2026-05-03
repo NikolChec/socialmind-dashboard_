@@ -14,7 +14,7 @@ if (process.env.NODE_ENV === 'production' && JWT_SECRET === DEFAULT_SECRET) {
 
 export interface AuthPayload {
   id: string;
-  role: 'school_admin' | 'psychologist' | 'parent';
+  role: 'school_admin' | 'psychologist' | 'parent' | 'teacher';
   school_id: string;
 }
 
@@ -62,11 +62,17 @@ export function userCanAccessChild(userId: string, childId: string, role: string
     return !!user && !!child && user.school_id === child.school_id;
   }
   if (role === 'psychologist') {
-    const row = db.prepare('SELECT 1 FROM children WHERE id = ? AND psychologist_id = ?').get(childId, userId);
-    return !!row;
+    const primary = db.prepare('SELECT 1 FROM children WHERE id = ? AND psychologist_id = ?').get(childId, userId);
+    if (primary) return true;
+    const linked = db.prepare('SELECT 1 FROM child_psychologists WHERE child_id = ? AND psychologist_id = ?').get(childId, userId);
+    return !!linked;
   }
   if (role === 'parent') {
     const row = db.prepare('SELECT 1 FROM child_parents WHERE child_id = ? AND parent_id = ?').get(childId, userId);
+    return !!row;
+  }
+  if (role === 'teacher') {
+    const row = db.prepare('SELECT 1 FROM child_teachers WHERE child_id = ? AND teacher_id = ?').get(childId, userId);
     return !!row;
   }
   return false;
@@ -76,7 +82,26 @@ export function userCanAccessChild(userId: string, childId: string, role: string
 export const psychologistCanAccessChild = userCanAccessChild;
 
 export function isReadOnlyRole(role: string): boolean {
-  return role === 'parent';
+  return role === 'parent' || role === 'teacher';
+}
+
+// True only for roles that are allowed to see content the child marked private from parents
+// (i.e. psychologists treating the child + school admins). Parents and teachers must not see it.
+export function canSeePrivateFromParents(role: string): boolean {
+  return role === 'school_admin' || role === 'psychologist';
+}
+
+// Returns true if the given teacher has an approved permission_request covering this scope (or 'full').
+export function teacherHasPermission(teacherId: string, childId: string, scope: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM permission_requests
+       WHERE teacher_id = ? AND child_id = ? AND status = 'approved'
+         AND (scope = ? OR scope = 'full')
+       LIMIT 1`
+    )
+    .get(teacherId, childId, scope);
+  return !!row;
 }
 
 export function requestMeta(req: Request): RequestMeta {

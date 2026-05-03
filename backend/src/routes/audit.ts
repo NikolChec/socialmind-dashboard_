@@ -30,7 +30,14 @@ auditRouter.get('/', (req, res) => {
   const { id, role, school_id } = req.auth!;
   const onlyMine = req.query.mine === 'true';
   const childId = typeof req.query.child_id === 'string' ? req.query.child_id : null;
-  const limit = Math.min(500, Number(req.query.limit) || 200);
+  const limit = Math.min(2000, Number(req.query.limit) || 200);
+  // Time range: day | week | month | all (default: all)
+  const range = typeof req.query.range === 'string' ? req.query.range : 'all';
+  const sinceMs =
+    range === 'day' ? Date.now() - 24 * 60 * 60 * 1000 :
+    range === 'week' ? Date.now() - 7 * 24 * 60 * 60 * 1000 :
+    range === 'month' ? Date.now() - 30 * 24 * 60 * 60 * 1000 :
+    null;
 
   if (childId && !psychologistCanAccessChild(id, childId, role)) {
     return res.status(403).json({ error: 'forbidden' });
@@ -58,6 +65,10 @@ auditRouter.get('/', (req, res) => {
   if (childId) {
     parts.push(`a.child_id = ?`);
     params.push(childId);
+  }
+  if (sinceMs !== null) {
+    parts.push(`a.created_at >= ?`);
+    params.push(new Date(sinceMs).toISOString());
   }
 
   const where = parts.length ? `WHERE ${parts.join(' AND ')}` : '';

@@ -5,7 +5,53 @@ import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
 import { db } from '../db/schema.js';
 import { signChildToken, requireChildAuth, CHILD_JWT_TTL_SECONDS } from '../middleware/child_auth.js';
-import { chatWithOllama, helperModelName } from '../services/ollama.js';
+import { startOtp, verifyOtp } from '../services/otp.js';
+import { chatWithOllama, streamFromOllama, helperModelName } from '../services/ollama.js';
+import { checkSafety } from '../services/safety.js';
+import { applyLearnedPatterns } from '../services/safety_learn.js';
+
+// Resolve the school for a child so the learned-pattern lookup is scoped correctly.
+function schoolIdForChild(child_id: string): string | null {
+  const row = db.prepare(`SELECT school_id FROM children WHERE id = ?`).get(child_id) as { school_id: string } | undefined;
+  return row?.school_id ?? null;
+}
+
+function safetyForChild(child_id: string, content: string) {
+  const base = checkSafety(content);
+  const schoolId = schoolIdForChild(child_id);
+  return schoolId ? applyLearnedPatterns(schoolId, content, base) : base;
+}
+
+function flagsForContent(child_id: string, content: string): string | null {
+  const r = safetyForChild(child_id, content);
+  if (r.severity === 'safe') return null;
+  return JSON.stringify({ severity: r.severity, categories: r.categories, phrases: r.matchedPhrases });
+}
+
+// When a kid's message is severe, also fire a dashboard alert so it shows in the priority graph.
+// Maps safety severity → alert priority used by the dashboard.
+function maybeRaiseAlert(child_id: string, content: string, role: 'child' | 'helper') {
+  if (role !== 'child') return; // only flag what the kid said, not what the AI replied
+  const r = safetyForChild(child_id, content);
+  if (r.severity === 'safe') return;
+  const priority: 'high' | 'medium' | 'low' =
+    r.severity === 'critical' || r.severity === 'high' ? 'high' :
+    r.severity === 'medium' ? 'medium' : 'low';
+  try {
+    db.prepare(
+      `INSERT INTO alerts (id, child_id, session_id, priority, type, excerpt, context, created_at)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?)`
+    ).run(
+      crypto.randomUUID(),
+      child_id,
+      priority,
+      `helper_${r.categories[0] ?? 'flagged'}`,
+      content.slice(0, 240),
+      JSON.stringify({ source: 'helper_chat', severity: r.severity, categories: r.categories, phrases: r.matchedPhrases }),
+      new Date().toISOString()
+    );
+  } catch { /* alerts table may not be migrated; ignore */ }
+}
 import type {
   ChatMessage,
   ChildAuthUser,
@@ -38,6 +84,8 @@ interface ChildRow {
   username: string | null;
   password_hash: string | null;
   preferred_lang: string;
+  two_factor_enabled?: number;
+  two_factor_email?: string | null;
 }
 
 function logEvent(child_id: string, type: ChildAppEventType, payload?: Record<string, unknown>) {
@@ -69,14 +117,17 @@ const loginSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
-childRouter.post('/auth/login', loginLimiter, (req, res) => {
+childRouter.post('/auth/login', loginLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'invalid_body' });
 
   const { username, password } = parsed.data;
   const row = db
     .prepare(
-      `SELECT id, school_id, display_name, grade, username, password_hash, COALESCE(preferred_lang,'en') AS preferred_lang
+      `SELECT id, school_id, display_name, grade, username, password_hash,
+              COALESCE(preferred_lang,'en') AS preferred_lang,
+              COALESCE(two_factor_enabled,0) AS two_factor_enabled,
+              two_factor_email
        FROM children WHERE lower(username) = lower(?)`
     )
     .get(username) as ChildRow | undefined;
@@ -85,6 +136,46 @@ childRouter.post('/auth/login', loginLimiter, (req, res) => {
     return res.status(401).json({ error: 'invalid_credentials' });
   }
 
+  // Admin-controlled 2FA for the kid login. Always require the OTP when 2FA is on
+  // — no trusted-device shortcut.
+  if (row.two_factor_enabled && row.two_factor_email) {
+    const otp = await startOtp(row.id, row.display_name, row.two_factor_email, 'child');
+    return res.json({
+      requires_2fa: true,
+      otp_token: otp.otp_token,
+      email_hint: maskEmail(row.two_factor_email),
+      delivered: otp.delivered,
+    });
+  }
+
+  return issueChildSession(res, row, /* trustDevice */ false, req.headers['user-agent'] ?? null);
+});
+
+const verifyOtpSchema = z.object({
+  otp_token: z.string().min(1).max(64),
+  code: z.string().regex(/^\d{6}$/),
+  trust_device: z.boolean().optional(),
+});
+
+childRouter.post('/auth/verify-otp', loginLimiter, (req, res) => {
+  const parsed = verifyOtpSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body' });
+  const result = verifyOtp(parsed.data.otp_token, parsed.data.code, 'child');
+  if (!result.ok) return res.status(401).json({ error: result.reason });
+  const row = db
+    .prepare(
+      `SELECT id, school_id, display_name, grade, username, password_hash,
+              COALESCE(preferred_lang,'en') AS preferred_lang,
+              COALESCE(two_factor_enabled,0) AS two_factor_enabled,
+              two_factor_email
+       FROM children WHERE id = ?`
+    )
+    .get(result.user_id) as ChildRow | undefined;
+  if (!row) return res.status(404).json({ error: 'child_not_found' });
+  return issueChildSession(res, row, !!parsed.data.trust_device, req.headers['user-agent'] ?? null);
+});
+
+function issueChildSession(res: import('express').Response, row: ChildRow, _trustDevice: boolean, _userAgent: string | null) {
   const token = signChildToken({ child_id: row.id, school_id: row.school_id });
   const child: ChildAuthUser = {
     id: row.id,
@@ -93,10 +184,17 @@ childRouter.post('/auth/login', loginLimiter, (req, res) => {
     school_id: row.school_id,
     preferred_lang: row.preferred_lang,
   };
-
+  // Trusted-device feature intentionally removed — every login goes through 2FA.
   logEvent(row.id, 'login');
   res.json({ token, child, expires_in: CHILD_JWT_TTL_SECONDS });
-});
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return '***';
+  const head = local.slice(0, Math.min(2, local.length));
+  return `${head}${'*'.repeat(Math.max(1, local.length - 2))}@${domain}`;
+}
 
 childRouter.get('/me', requireChildAuth, (req, res) => {
   const c = loadChild(req.child!.child_id);
@@ -322,6 +420,7 @@ childRouter.get('/missions', requireChildAuth, (req, res) => {
 
 const completeSchema = z.object({
   reflection: z.string().max(500).optional(),
+  private_from_parents: z.boolean().optional(),
 });
 
 childRouter.post('/missions/:id/complete', requireChildAuth, (req, res) => {
@@ -337,13 +436,27 @@ childRouter.post('/missions/:id/complete', requireChildAuth, (req, res) => {
 
   const reflection = parsed.data.reflection ?? null;
   if (row.completed_at) {
-    db.prepare(`UPDATE child_missions SET completed_at = NULL, child_reflection = NULL WHERE id = ?`).run(id);
+    db.prepare(`UPDATE child_missions SET completed_at = NULL, child_reflection = NULL, private_from_parents = 0 WHERE id = ?`).run(id);
     logEvent(child_id, 'mission_uncompleted', { mission_id: id, title: row.title });
   } else {
-    db.prepare(`UPDATE child_missions SET completed_at = ?, child_reflection = ? WHERE id = ?`)
-      .run(new Date().toISOString(), reflection, id);
+    db.prepare(`UPDATE child_missions SET completed_at = ?, child_reflection = ?, private_from_parents = ? WHERE id = ?`)
+      .run(new Date().toISOString(), reflection, parsed.data.private_from_parents ? 1 : 0, id);
     logEvent(child_id, 'mission_completed', { mission_id: id, title: row.title, reflection });
   }
+  res.json({ ok: true });
+});
+
+// Child can delete their own mission (the kid app's "remove mission" action). Idempotent —
+// missing rows return 404 but the UI treats both 200 and 404 the same.
+childRouter.delete('/missions/:id', requireChildAuth, (req, res) => {
+  const child_id = req.child!.child_id;
+  const { id } = req.params;
+  const row = db
+    .prepare(`SELECT title FROM child_missions WHERE id = ? AND child_id = ?`)
+    .get(id, child_id) as { title: string } | undefined;
+  if (!row) return res.status(404).json({ error: 'not_found' });
+  db.prepare(`DELETE FROM child_missions WHERE id = ? AND child_id = ?`).run(id, child_id);
+  logEvent(child_id, 'mission_uncompleted', { mission_id: id, title: row.title, reason: 'deleted_by_child' });
   res.json({ ok: true });
 });
 
@@ -357,6 +470,9 @@ const helperSchema = z.object({
     })
   ).min(1).max(40),
   lang: z.string().max(8).optional(),
+  // When true, the child has chosen to hide this exchange from their parents/teachers.
+  // Psychologists and admins can still see it (safety oversight).
+  private_from_parents: z.boolean().optional(),
 });
 
 function helperSystemPrompt(child: ChildAuthUser, lang: string, strict = false): string {
@@ -473,8 +589,9 @@ childRouter.post('/helper/chat', requireChildAuth, async (req, res) => {
   const lastUser = [...data.messages].reverse().find((m) => m.role === 'user');
   if (lastUser) {
     db.prepare(
-      `INSERT INTO child_helper_messages (id, child_id, role, content, created_at) VALUES (?, ?, 'child', ?, ?)`
-    ).run(crypto.randomUUID(), child_id, lastUser.content, new Date().toISOString());
+      `INSERT INTO child_helper_messages (id, child_id, role, content, flags, private_from_parents, created_at) VALUES (?, ?, 'child', ?, ?, ?, ?)`
+    ).run(crypto.randomUUID(), child_id, lastUser.content, flagsForContent(child_id, lastUser.content), data.private_from_parents ? 1 : 0, new Date().toISOString());
+    maybeRaiseAlert(child_id, lastUser.content, 'child');
   }
 
   try {
@@ -484,8 +601,8 @@ childRouter.post('/helper/chat', requireChildAuth, async (req, res) => {
       reply = await chatWithOllama(buildMessages(true), { model: helperModelName, temperature: 0.2 });
     }
     db.prepare(
-      `INSERT INTO child_helper_messages (id, child_id, role, content, created_at) VALUES (?, ?, 'helper', ?, ?)`
-    ).run(crypto.randomUUID(), child_id, reply, new Date().toISOString());
+      `INSERT INTO child_helper_messages (id, child_id, role, content, flags, private_from_parents, created_at) VALUES (?, ?, 'helper', ?, ?, ?, ?)`
+    ).run(crypto.randomUUID(), child_id, reply, flagsForContent(child_id, reply), data.private_from_parents ? 1 : 0, new Date().toISOString());
     logEvent(child_id, 'helper_chat', { user_text_preview: lastUser?.content.slice(0, 80) ?? '' });
     res.json({ reply });
   } catch (err) {
@@ -496,6 +613,66 @@ childRouter.post('/helper/chat', requireChildAuth, async (req, res) => {
       hint: 'Is Ollama running? Start with: ollama serve',
     });
   }
+});
+
+// Streaming variant: server-sent events. Each chunk is `data: {"delta":"<text>"}\n\n`,
+// final event is `data: {"done":true}\n\n`. Frontend appends `delta` to the message bubble live.
+childRouter.post('/helper/chat/stream', requireChildAuth, async (req, res) => {
+  const parsed = helperSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'invalid_body' });
+
+  const child_id = req.child!.child_id;
+  const child = loadChild(child_id);
+  if (!child) return res.status(404).json({ error: 'not_found' });
+
+  const data = parsed.data;
+  const lang = data.lang || child.preferred_lang || 'en';
+  const reminder = lang === 'he'
+    ? '[הנחיה: ענה אך ורק בעברית. אסור מילים באנגלית.]'
+    : lang === 'ru'
+      ? '[Инструкция: отвечай ТОЛЬКО на русском. Никаких английских слов.]'
+      : '[Instruction: reply only in English.]';
+
+  const messagesForLlm: ChatMessage[] = (() => {
+    const msgs = data.messages.map((m) => ({ ...m }));
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') {
+        msgs[i].content = `${msgs[i].content}\n\n${reminder}`;
+        break;
+      }
+    }
+    return [{ role: 'system', content: helperSystemPrompt(child, lang, false) }, ...msgs];
+  })();
+
+  const lastUser = [...data.messages].reverse().find((m) => m.role === 'user');
+  if (lastUser) {
+    db.prepare(
+      `INSERT INTO child_helper_messages (id, child_id, role, content, flags, private_from_parents, created_at) VALUES (?, ?, 'child', ?, ?, ?, ?)`
+    ).run(crypto.randomUUID(), child_id, lastUser.content, flagsForContent(child_id, lastUser.content), data.private_from_parents ? 1 : 0, new Date().toISOString());
+    maybeRaiseAlert(child_id, lastUser.content, 'child');
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  let assembled = '';
+  try {
+    for await (const piece of streamFromOllama(messagesForLlm, { model: helperModelName, temperature: 0.4 })) {
+      assembled += piece;
+      res.write(`data: ${JSON.stringify({ delta: piece })}\n\n`);
+    }
+    db.prepare(
+      `INSERT INTO child_helper_messages (id, child_id, role, content, flags, private_from_parents, created_at) VALUES (?, ?, 'helper', ?, ?, ?, ?)`
+    ).run(crypto.randomUUID(), child_id, assembled, flagsForContent(child_id, assembled), data.private_from_parents ? 1 : 0, new Date().toISOString());
+    logEvent(child_id, 'helper_chat', { user_text_preview: lastUser?.content.slice(0, 80) ?? '' });
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown_error';
+    res.write(`data: ${JSON.stringify({ error: 'helper_unavailable', detail: msg })}\n\n`);
+  }
+  res.end();
 });
 
 childRouter.get('/helper/history', requireChildAuth, (req, res) => {

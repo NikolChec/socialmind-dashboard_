@@ -33,7 +33,7 @@ contactsRouter.get('/:childId', (req, res) => {
 
 contactsRouter.post('/:childId', (req, res) => {
   const { id: userId, role } = req.auth!;
-  if (role === 'parent') return res.status(403).json({ error: 'read_only' });
+  if (role === 'parent' || role === 'teacher') return res.status(403).json({ error: 'read_only' });
   const { childId } = req.params;
   if (!psychologistCanAccessChild(userId, childId, role)) return res.status(403).json({ error: 'forbidden' });
   const parsed = upsertSchema.safeParse(req.body);
@@ -57,7 +57,7 @@ contactsRouter.post('/:childId', (req, res) => {
 
 contactsRouter.delete('/:childId/:contactId', (req, res) => {
   const { id: userId, role } = req.auth!;
-  if (role === 'parent') return res.status(403).json({ error: 'read_only' });
+  if (role === 'parent' || role === 'teacher') return res.status(403).json({ error: 'read_only' });
   const { childId, contactId } = req.params;
   if (!psychologistCanAccessChild(userId, childId, role)) return res.status(403).json({ error: 'forbidden' });
   const row = db.prepare(`SELECT logged_by FROM parent_contacts WHERE id = ? AND child_id = ?`).get(contactId, childId);
