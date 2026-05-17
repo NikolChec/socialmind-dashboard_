@@ -1,31 +1,38 @@
 /// <reference types="vite/client" />
+// HACKATHON DEMO BUILD — no backend. All methods resolve against in-memory mock data
+// from ./mockData. The original fetch-based implementation is preserved as api.real.ts.bak.
+//
+// The exported `api` object's shape is identical to the real one, so no page or
+// component needed to change. To restore: `mv api.real.ts.bak api.ts`.
+
 import type {
   AuthUser,
   Child,
-  Session,
-  Alert,
-  ProgressPoint,
   LoginResponse,
   ChatMessage,
-  ChildSummary,
-  ScenarioBreakdown,
   EscalationAction,
   ScenarioQueueItem,
   ParentContact,
   AuditEntry,
-  RiskSnapshotPoint,
   TranscriptMatch,
   ContactMethod,
   ScenarioType,
   AdminUserRow,
   Role,
-  CompanionActivitySummary,
-  HelperChatLog,
   ChildMissionWithMeta,
   MissionRequest,
   NewMissionInput,
   MissionDifficulty,
+  ScenarioQueueRequest,
 } from '@socialmind/shared';
+import * as mock from './mockData';
+
+// auth.tsx uses `'requires_2fa' in res` to discriminate the login response.
+// Preserve the union shape so that narrowing works, even though the demo build
+// never returns the 2FA variant.
+type LoginOrChallenge =
+  | LoginResponse
+  | { requires_2fa: true; otp_token: string; email_hint: string; delivered: boolean };
 
 export interface PriorityDistributionRow {
   child_id: string;
@@ -42,12 +49,7 @@ export interface PriorityDistributionRow {
 
 const TOKEN_KEY = 'socialmind.token';
 
-// In dev (Vite served), `/api/*` is proxied to localhost:4000.
-// In production (Electron loads dist/index.html via file://), there is no proxy,
-// so we hit the backend directly. VITE_API_BASE is set at build time.
-export const API_BASE: string =
-  (import.meta.env.VITE_API_BASE as string | undefined) ??
-  (window.location.protocol === 'file:' ? 'http://localhost:4000' : '');
+export const API_BASE = '';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -57,248 +59,291 @@ export function setToken(t: string | null) {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    // Skip the ngrok free-tier browser-warning interstitial on API calls.
-    // Harmless when not going through ngrok.
-    'ngrok-skip-browser-warning': 'true',
-    ...(init.headers as Record<string, string> | undefined),
-  };
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
+// Small fake latency so loading states briefly show. Keep it short — judges are watching.
+const DELAY_MS = 120;
+const delay = <T>(value: T): Promise<T> =>
+  new Promise((resolve) => setTimeout(() => resolve(value), DELAY_MS));
 
-  const res = await fetch(`${API_BASE}/api${path}`, { ...init, headers, credentials: 'include' });
-  if (!res.ok) {
-    let body: unknown;
-    try { body = await res.json(); } catch { body = await res.text(); }
-    throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body });
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+function httpError(status: number, body: unknown): Error {
+  return Object.assign(new Error(`HTTP ${status}`), { status, body });
 }
 
 export const api = {
-  login: (email: string, password: string) =>
-    request<LoginResponse | { requires_2fa: true; otp_token: string; email_hint: string; delivered: boolean }>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    }),
-  verifyOtp: (otp_token: string, code: string, trust_device: boolean) =>
-    request<LoginResponse>('/auth/verify-otp', {
-      method: 'POST',
-      body: JSON.stringify({ otp_token, code, trust_device }),
-    }),
-  me: () => request<AuthUser>('/auth/me'),
-  children: () => request<ChildSummary[]>('/children'),
-  child: (id: string) => request<Child & { psychologist_name: string }>(`/children/${id}`),
-  childSessions: (id: string) => request<Session[]>(`/children/${id}/sessions`),
-  childProgress: (id: string) => request<ProgressPoint[]>(`/children/${id}/progress`),
-  childAlerts: (id: string) => request<Alert[]>(`/children/${id}/alerts`),
-  childScenarioBreakdown: (id: string) => request<ScenarioBreakdown[]>(`/children/${id}/scenario-breakdown`),
-  updateSessionNotes: (childId: string, sessionId: string, notes: string) =>
-    request<{ ok: true }>(`/children/${childId}/sessions/${sessionId}/notes`, {
-      method: 'PATCH',
-      body: JSON.stringify({ notes }),
-    }),
-  alerts: (onlyUnack = false) =>
-    request<Array<Alert & { child_name: string }>>(`/alerts${onlyUnack ? '?unacknowledged=true' : ''}`),
-  ackAlert: (id: string, body: { action_taken?: EscalationAction; action_note?: string } = {}) =>
-    request<{ ok: true }>(`/alerts/${id}/acknowledge`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  priorityDistribution: () => request<PriorityDistributionRow[]>('/analytics/priority-distribution'),
-  childRiskHistory: (id: string) => request<RiskSnapshotPoint[]>(`/children/${id}/risk-history`),
-  childCompanionActivity: (id: string) => request<CompanionActivitySummary>(`/children/${id}/companion-activity`),
-  childHelperChats: (id: string) => request<HelperChatLog>(`/children/${id}/helper-chats`),
-  adminCreateChild: (body: {
-    display_name: string; grade: number; date_of_birth: string;
-    username: string; password: string; psychologist_id: string;
-    preferred_lang?: 'en' | 'he' | 'ru'; notes?: string;
-  }) => request<{ id: string; username: string }>('/admin/children', {
-    method: 'POST', body: JSON.stringify(body),
-  }),
-  adminDeleteChild: (id: string) => request<{ ok: true }>(`/admin/children/${id}`, { method: 'DELETE' }),
-
-  childGuardians: (id: string) =>
-    request<Array<{ id: string; name: string; email: string; phone: string | null; rel: 'parent' | 'psychologist' | 'teacher' }>>(`/children/${id}/guardians`),
-  childMissions: (id: string) => request<ChildMissionWithMeta[]>(`/children/${id}/missions`),
-  createMission: (childId: string, body: NewMissionInput) =>
-    request<{ id: string }>(`/children/${childId}/missions`, {
-      method: 'POST', body: JSON.stringify(body),
-    }),
-  deleteMission: (childId: string, missionId: string) =>
-    request<{ ok: true }>(`/children/${childId}/missions/${missionId}`, { method: 'DELETE' }),
-
-  childMissionRequests: (childId: string) =>
-    request<MissionRequest[]>(`/children/${childId}/mission-requests`),
-  submitMissionRequest: (childId: string, body: { title: string; description: string; difficulty?: MissionDifficulty; xp?: number }) =>
-    request<{ id: string }>(`/children/${childId}/mission-requests`, {
-      method: 'POST', body: JSON.stringify(body),
-    }),
-  approveMissionRequest: (childId: string, reqId: string, note?: string) =>
-    request<{ ok: true; mission_id: string }>(`/children/${childId}/mission-requests/${reqId}/approve`, {
-      method: 'POST', body: JSON.stringify({ note: note ?? '' }),
-    }),
-  rejectMissionRequest: (childId: string, reqId: string, note?: string) =>
-    request<{ ok: true }>(`/children/${childId}/mission-requests/${reqId}/reject`, {
-      method: 'POST', body: JSON.stringify({ note: note ?? '' }),
-    }),
-
-  childScenarioRequests: (childId: string) =>
-    request<import('@socialmind/shared').ScenarioQueueRequest[]>(`/children/${childId}/scenario-requests`),
-  submitScenarioRequest: (childId: string, body: { scenario: ScenarioType; notes?: string }) =>
-    request<{ id: string }>(`/children/${childId}/scenario-requests`, {
-      method: 'POST', body: JSON.stringify(body),
-    }),
-  approveScenarioRequest: (childId: string, reqId: string, note?: string) =>
-    request<{ ok: true; queue_id: string }>(`/children/${childId}/scenario-requests/${reqId}/approve`, {
-      method: 'POST', body: JSON.stringify({ note: note ?? '' }),
-    }),
-  rejectScenarioRequest: (childId: string, reqId: string, note?: string) =>
-    request<{ ok: true }>(`/children/${childId}/scenario-requests/${reqId}/reject`, {
-      method: 'POST', body: JSON.stringify({ note: note ?? '' }),
-    }),
-
-  labelHelperMessage: (childId: string, msgId: string, body: { severity: 'safe'|'low'|'medium'|'high'|'critical'; category: string; reason?: string }) =>
-    request<{ ok: true; label_id: string; severity: string; category: string }>(
-      `/children/${childId}/helper-messages/${msgId}/label`,
-      { method: 'POST', body: JSON.stringify(body) }
-    ),
-  learnedSafetyPatterns: () =>
-    request<Array<{ id: string; pattern: string; category: string; severity: string; hit_count: number; last_hit_at: string | null; created_at: string }>>(
-      `/children/safety-patterns/learned`
-    ),
-  transcriptSearch: (id: string, q: string) =>
-    request<TranscriptMatch[]>(`/children/${id}/transcript-search?q=${encodeURIComponent(q)}`),
-
-  queue: (childId: string) => request<ScenarioQueueItem[]>(`/queue/${childId}`),
-  queueAdd: (childId: string, scenario: ScenarioType, notes?: string) =>
-    request<{ id: string }>(`/queue/${childId}`, { method: 'POST', body: JSON.stringify({ scenario, notes }) }),
-  queueRemove: (childId: string, itemId: string) =>
-    request<{ ok: true }>(`/queue/${childId}/${itemId}`, { method: 'DELETE' }),
-
-  contacts: (childId: string) => request<ParentContact[]>(`/contacts/${childId}`),
-  contactAdd: (childId: string, body: {
-    contacted_at: string; method: ContactMethod; person: string; topic: string; outcome?: string; notes?: string;
-  }) => request<{ id: string }>(`/contacts/${childId}`, { method: 'POST', body: JSON.stringify(body) }),
-  contactRemove: (childId: string, contactId: string) =>
-    request<{ ok: true }>(`/contacts/${childId}/${contactId}`, { method: 'DELETE' }),
-
-  audit: (opts: { mine?: boolean; child_id?: string; limit?: number; range?: 'day' | 'week' | 'month' | 'all' } = {}) => {
-    const p = new URLSearchParams();
-    if (opts.mine) p.set('mine', 'true');
-    if (opts.child_id) p.set('child_id', opts.child_id);
-    if (opts.limit) p.set('limit', String(opts.limit));
-    if (opts.range) p.set('range', opts.range);
-    return request<AuditEntry[]>(`/audit${p.toString() ? `?${p}` : ''}`);
+  // ───── auth ─────
+  login: async (email: string, password: string): Promise<LoginOrChallenge> => {
+    const r = mock.loginWithDemoCreds(email, password);
+    if (r === 'invalid') throw httpError(401, { error: 'invalid_credentials' });
+    return delay(r);
   },
-
-  downloadReport: async (childId: string, weeks: number, opts: { confirm?: boolean } = {}) => {
+  verifyOtp: async (_otp_token: string, _code: string, _trust_device: boolean): Promise<LoginResponse> => {
+    // 2FA path is unreachable in the demo build — login never returns requires_2fa.
+    throw httpError(400, { error: 'demo_mode_no_otp' });
+  },
+  me: async (): Promise<AuthUser> => {
     const token = getToken();
-    const url = `${API_BASE}/api/reports/child/${childId}?weeks=${weeks}${opts.confirm ? '&confirm=1' : ''}`;
-    const res = await fetch(url, {
-      headers: {
-        'ngrok-skip-browser-warning': 'true',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
-    if (res.status === 428) {
-      const body = await res.json();
-      throw Object.assign(new Error('confirmation_required'), { status: 428, body });
-    }
-    if (!res.ok) throw new Error(`report_failed_${res.status}`);
-    const blob = await res.blob();
-    const disp = res.headers.get('Content-Disposition') || '';
-    const match = disp.match(/filename="([^"]+)"/);
-    const name = match ? match[1] : `report.pdf`;
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl; a.download = name;
-    document.body.appendChild(a); a.click();
-    URL.revokeObjectURL(blobUrl); a.remove();
+    const u = token ? mock.userFromToken(token) : null;
+    if (!u) throw httpError(401, { error: 'invalid_token' });
+    return delay(u);
+  },
+  logout: async () => {
+    return delay({ ok: true as const });
   },
 
-  setSensitive: (childId: string, is_sensitive: boolean) =>
-    request<{ ok: true }>(`/children/${childId}/sensitivity`, {
-      method: 'PATCH', body: JSON.stringify({ is_sensitive }),
-    }),
+  // ───── children ─────
+  children: async () => delay(mock.getChildSummaries()),
+  child: async (id: string): Promise<Child & { psychologist_name: string }> => {
+    const c = mock.getChildById(id);
+    if (!c) throw httpError(404, { error: 'not_found' });
+    return delay(c);
+  },
+  childSessions: async (id: string) => delay(mock.getSessions(id)),
+  childProgress: async (id: string) => delay(mock.getProgress(id)),
+  childAlerts: async (id: string) => delay(mock.getChildAlerts(id)),
+  childScenarioBreakdown: async (id: string) => delay(mock.getScenarioBreakdown(id)),
+  childRiskHistory: async (id: string) => delay(mock.getRiskHistory(id)),
+  childCompanionActivity: async (id: string) => delay(mock.getCompanionActivity(id)),
+  childHelperChats: async (id: string) => delay(mock.getHelperChats(id)),
+  childGuardians: async (id: string) => delay(mock.guardiansFor(id)),
 
-  logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+  updateSessionNotes: async (childId: string, sessionId: string, notes: string) => {
+    mock.updateSessionNotes(childId, sessionId, notes);
+    return delay({ ok: true as const });
+  },
+  setSensitive: async (childId: string, is_sensitive: boolean) => {
+    mock.setSensitivity(childId, is_sensitive);
+    return delay({ ok: true as const });
+  },
 
-  adminUsers: (role?: Role) =>
-    request<AdminUserRow[]>(`/admin/users${role ? `?role=${role}` : ''}`),
-  adminCreateUser: (body: {
-    email: string; name: string; role: Role; password: string; phone?: string; child_ids?: string[];
-  }) => request<{ id: string }>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
-  adminUpdateUser: (id: string, body: { name?: string; email?: string; phone?: string | null; password?: string }) =>
-    request<{ ok: true }>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  adminDeleteUser: (id: string) =>
-    request<{ ok: true }>(`/admin/users/${id}`, { method: 'DELETE' }),
-  adminSetUserTwoFactor: (id: string, enabled: boolean, email?: string | null) =>
-    request<{ ok: true }>(`/admin/users/${id}/2fa`, { method: 'PATCH', body: JSON.stringify({ enabled, email: email ?? null }) }),
-  adminGetChildTwoFactor: (id: string) =>
-    request<{ enabled: boolean; email: string | null }>(`/admin/children/${id}/2fa`),
-  adminSetChildTwoFactor: (id: string, enabled: boolean, email?: string | null) =>
-    request<{ ok: true }>(`/admin/children/${id}/2fa`, { method: 'PATCH', body: JSON.stringify({ enabled, email: email ?? null }) }),
-  adminUpdateChildCredentials: (id: string, body: { username?: string; password?: string }) =>
-    request<{ ok: true }>(`/admin/children/${id}/credentials`, { method: 'PATCH', body: JSON.stringify(body) }),
-  adminReassignPsychologist: (childId: string, psychologistId: string) =>
-    request<{ ok: true }>(`/admin/children/${childId}/psychologist`, {
-      method: 'PATCH', body: JSON.stringify({ psychologist_id: psychologistId }),
-    }),
-  adminListChildParents: (childId: string) =>
-    request<Array<{ id: string; email: string; name: string; phone: string | null }>>(`/admin/children/${childId}/parents`),
-  adminLinkParent: (childId: string, parentId: string) =>
-    request<{ ok: true }>(`/admin/children/${childId}/parents`, {
-      method: 'POST', body: JSON.stringify({ parent_id: parentId }),
-    }),
-  adminUnlinkParent: (childId: string, parentId: string) =>
-    request<{ ok: true }>(`/admin/children/${childId}/parents/${parentId}`, { method: 'DELETE' }),
+  // ───── alerts ─────
+  alerts: async (onlyUnack = false) => delay(mock.getAllAlerts(onlyUnack)),
+  ackAlert: async (id: string, body: { action_taken?: EscalationAction; action_note?: string } = {}) => {
+    mock.ackAlert(id, body);
+    return delay({ ok: true as const });
+  },
 
-  adminListChildPsychologists: (childId: string) =>
-    request<Array<{ id: string; email: string; name: string; phone: string | null; is_primary: number }>>(`/admin/children/${childId}/psychologists`),
-  adminLinkPsychologist: (childId: string, psychologistId: string) =>
-    request<{ ok: true }>(`/admin/children/${childId}/psychologists`, {
-      method: 'POST', body: JSON.stringify({ psychologist_id: psychologistId }),
-    }),
-  adminUnlinkPsychologist: (childId: string, psychologistId: string) =>
-    request<{ ok: true }>(`/admin/children/${childId}/psychologists/${psychologistId}`, { method: 'DELETE' }),
+  // ───── analytics ─────
+  priorityDistribution: async (): Promise<PriorityDistributionRow[]> =>
+    delay(mock.getPriorityDistribution()),
 
-  adminListChildTeachers: (childId: string) =>
-    request<Array<{ id: string; email: string; name: string; phone: string | null }>>(`/admin/children/${childId}/teachers`),
-  adminLinkTeacher: (childId: string, teacherId: string) =>
-    request<{ ok: true }>(`/admin/children/${childId}/teachers`, {
-      method: 'POST', body: JSON.stringify({ teacher_id: teacherId }),
-    }),
-  adminUnlinkTeacher: (childId: string, teacherId: string) =>
-    request<{ ok: true }>(`/admin/children/${childId}/teachers/${teacherId}`, { method: 'DELETE' }),
+  // ───── missions ─────
+  childMissions: async (id: string): Promise<ChildMissionWithMeta[]> => delay(mock.getMissions(id)),
+  createMission: async (childId: string, body: NewMissionInput) => {
+    const id = mock.addMission(childId, {
+      title: body.title, description: body.description,
+      difficulty: body.difficulty, xp: body.xp, due_date: body.due_date ?? null,
+    });
+    return delay({ id });
+  },
+  deleteMission: async (childId: string, missionId: string) => {
+    mock.deleteMission(childId, missionId);
+    return delay({ ok: true as const });
+  },
 
-  adminListPermissionRequests: (status?: 'pending' | 'approved' | 'denied') =>
-    request<Array<{
-      id: string; teacher_id: string; teacher_name: string; child_id: string; child_name: string;
-      scope: 'helper_chats' | 'alerts' | 'sessions' | 'missions' | 'full';
-      reason: string; status: 'pending' | 'approved' | 'denied';
-      requested_at: string; resolved_at: string | null; resolved_by: string | null;
-      resolved_by_name: string | null; resolved_note: string | null;
-    }>>(`/admin/permission-requests${status ? `?status=${status}` : ''}`),
-  adminResolvePermissionRequest: (id: string, body: { status: 'approved' | 'denied'; resolved_note?: string }) =>
-    request<{ ok: true }>(`/admin/permission-requests/${id}`, {
-      method: 'PATCH', body: JSON.stringify(body),
-    }),
+  // ───── mission requests ─────
+  childMissionRequests: async (childId: string): Promise<MissionRequest[]> =>
+    delay(mock.getMissionRequests(childId)),
+  submitMissionRequest: async (childId: string, body: { title: string; description: string; difficulty?: MissionDifficulty; xp?: number }) => {
+    const id = mock.submitMissionRequest(childId, body);
+    return delay({ id });
+  },
+  approveMissionRequest: async (childId: string, reqId: string, note?: string) => {
+    const mission_id = mock.decideMissionRequest(childId, reqId, true, note) ?? '';
+    return delay({ ok: true as const, mission_id });
+  },
+  rejectMissionRequest: async (childId: string, reqId: string, note?: string) => {
+    mock.decideMissionRequest(childId, reqId, false, note);
+    return delay({ ok: true as const });
+  },
 
-  teacherListPermissionRequests: () =>
-    request<Array<{ id: string; child_id: string; child_name: string; scope: string; status: string; requested_at: string; resolved_at: string | null; resolved_note: string | null }>>(`/teacher/permission-requests`),
-  teacherCreatePermissionRequest: (body: { child_id: string; scope: 'helper_chats' | 'alerts' | 'sessions' | 'missions' | 'full'; reason?: string }) =>
-    request<{ id: string }>(`/teacher/permission-requests`, { method: 'POST', body: JSON.stringify(body) }),
+  // ───── scenario requests ─────
+  childScenarioRequests: async (childId: string): Promise<ScenarioQueueRequest[]> =>
+    delay(mock.getScenarioRequests(childId)),
+  submitScenarioRequest: async (childId: string, body: { scenario: ScenarioType; notes?: string }) => {
+    const id = mock.submitScenarioRequest(childId, body.scenario, body.notes);
+    return delay({ id });
+  },
+  approveScenarioRequest: async (childId: string, reqId: string, note?: string) => {
+    const queue_id = mock.decideScenarioRequest(childId, reqId, true, note) ?? '';
+    return delay({ ok: true as const, queue_id });
+  },
+  rejectScenarioRequest: async (childId: string, reqId: string, note?: string) => {
+    mock.decideScenarioRequest(childId, reqId, false, note);
+    return delay({ ok: true as const });
+  },
 
-  assistantChat: (messages: ChatMessage[], child_id?: string) =>
-    request<{ reply: string }>('/assistant/chat', {
-      method: 'POST',
-      body: JSON.stringify({ messages, child_id }),
-    }),
+  // ───── helper-message labelling + learned patterns ─────
+  labelHelperMessage: async (_childId: string, _msgId: string, body: { severity: 'safe'|'low'|'medium'|'high'|'critical'; category: string; reason?: string }) =>
+    delay({ ok: true as const, label_id: `label-${Date.now()}`, severity: body.severity, category: body.category }),
+  learnedSafetyPatterns: async () =>
+    delay([
+      { id: 'lp-1', pattern: 'feel sad all the time', category: 'distress', severity: 'medium', hit_count: 3, last_hit_at: new Date(Date.now() - 20 * 3_600_000).toISOString(), created_at: new Date(Date.now() - 14 * 86_400_000).toISOString() },
+      { id: 'lp-2', pattern: 'want to disappear',     category: 'self_harm', severity: 'high',   hit_count: 1, last_hit_at: new Date(Date.now() - 3 * 86_400_000).toISOString(), created_at: new Date(Date.now() - 7 * 86_400_000).toISOString() },
+      { id: 'lp-3', pattern: 'they push me',          category: 'bullying',  severity: 'high',   hit_count: 2, last_hit_at: new Date(Date.now() - 3 * 3_600_000).toISOString(), created_at: new Date(Date.now() - 10 * 86_400_000).toISOString() },
+    ]),
+  transcriptSearch: async (id: string, q: string): Promise<TranscriptMatch[]> => {
+    const sessions = mock.getSessions(id);
+    const needle = q.toLowerCase();
+    const out: TranscriptMatch[] = [];
+    for (const s of sessions) {
+      const hits = s.transcript.filter((t) => t.text.toLowerCase().includes(needle));
+      if (hits.length === 0) continue;
+      out.push({
+        session_id: s.id, scenario: s.scenario, started_at: s.started_at,
+        snippets: hits.map((h) => ({ speaker: h.speaker, text: h.text, ts: h.ts })),
+      });
+    }
+    return delay(out);
+  },
+
+  // ───── scenario queue ─────
+  queue: async (childId: string): Promise<ScenarioQueueItem[]> => delay(mock.getScenarioQueue(childId)),
+  queueAdd: async (childId: string, scenario: ScenarioType, notes?: string) => {
+    const id = mock.addQueueItem(childId, scenario, notes);
+    return delay({ id });
+  },
+  queueRemove: async (childId: string, itemId: string) => {
+    mock.removeQueueItem(childId, itemId);
+    return delay({ ok: true as const });
+  },
+
+  // ───── parent contacts ─────
+  contacts: async (childId: string): Promise<ParentContact[]> => delay(mock.getContacts(childId)),
+  contactAdd: async (childId: string, body: { contacted_at: string; method: ContactMethod; person: string; topic: string; outcome?: string; notes?: string }) => {
+    const id = mock.addContact(childId, body);
+    return delay({ id });
+  },
+  contactRemove: async (childId: string, contactId: string) => {
+    mock.removeContact(childId, contactId);
+    return delay({ ok: true as const });
+  },
+
+  // ───── audit ─────
+  audit: async (opts: { mine?: boolean; child_id?: string; limit?: number; range?: 'day' | 'week' | 'month' | 'all' } = {}): Promise<AuditEntry[]> =>
+    delay(mock.getAudit(opts)),
+
+  // ───── PDF reports — disabled in demo ─────
+  downloadReport: async (_childId: string, _weeks: number, _opts: { confirm?: boolean } = {}) => {
+    await delay(null);
+    alert('Demo mode — PDF generation requires the backend. Click any other dashboard area to keep exploring.');
+  },
+
+  // ───── assistant (counselor's clinical chatbot) ─────
+  assistantChat: async (messages: ChatMessage[], _child_id?: string) => {
+    const last = messages[messages.length - 1]?.content ?? '';
+    const reply = canned(last);
+    return delay({ reply });
+  },
+
+  // ───── admin: users ─────
+  adminUsers: async (role?: Role): Promise<AdminUserRow[]> => delay(mock.listUsers(role)),
+  adminCreateUser: async (body: { email: string; name: string; role: Role; password: string; phone?: string; child_ids?: string[] }) => {
+    const id = mock.createUser(body);
+    return delay({ id });
+  },
+  adminUpdateUser: async (id: string, body: { name?: string; email?: string; phone?: string | null; password?: string }) => {
+    mock.updateUser(id, body);
+    return delay({ ok: true as const });
+  },
+  adminDeleteUser: async (id: string) => {
+    mock.deleteUser(id);
+    return delay({ ok: true as const });
+  },
+  adminSetUserTwoFactor: async (id: string, enabled: boolean, email?: string | null) => {
+    mock.setUserTwoFactor(id, enabled, email ?? null);
+    return delay({ ok: true as const });
+  },
+
+  // ───── admin: children ─────
+  adminCreateChild: async (body: { display_name: string; grade: number; date_of_birth: string; username: string; password: string; psychologist_id: string; preferred_lang?: 'en' | 'he' | 'ru'; notes?: string }) => {
+    const r = mock.createChild(body);
+    return delay(r);
+  },
+  adminDeleteChild: async (id: string) => {
+    mock.deleteChild(id);
+    return delay({ ok: true as const });
+  },
+  adminGetChildTwoFactor: async (id: string) => {
+    const c = mock.mockState.children.find((c) => c.id === id);
+    return delay({ enabled: !!c?.two_factor_enabled, email: c?.two_factor_email ?? null });
+  },
+  adminSetChildTwoFactor: async (id: string, enabled: boolean, email?: string | null) => {
+    const c = mock.mockState.children.find((c) => c.id === id);
+    if (c) { c.two_factor_enabled = enabled; c.two_factor_email = email ?? null; }
+    return delay({ ok: true as const });
+  },
+  adminUpdateChildCredentials: async (id: string, body: { username?: string; password?: string }) => {
+    const c = mock.mockState.children.find((c) => c.id === id);
+    if (c && body.username !== undefined) c.username = body.username;
+    return delay({ ok: true as const });
+  },
+  adminReassignPsychologist: async (childId: string, psychologistId: string) => {
+    const c = mock.mockState.children.find((c) => c.id === childId);
+    if (c) c.psychologist_id = psychologistId;
+    return delay({ ok: true as const });
+  },
+
+  // ───── admin: child↔user linkage ─────
+  adminListChildParents: async (childId: string) =>
+    delay(mock.listChildLinks(childId, 'parents').map(({ id, name, email, phone }) => ({ id, name, email, phone }))),
+  adminLinkParent: async (childId: string, parentId: string) => {
+    mock.linkChildUser(childId, parentId, 'parents');
+    return delay({ ok: true as const });
+  },
+  adminUnlinkParent: async (childId: string, parentId: string) => {
+    mock.unlinkChildUser(childId, parentId, 'parents');
+    return delay({ ok: true as const });
+  },
+
+  adminListChildPsychologists: async (childId: string) =>
+    delay(mock.listChildLinks(childId, 'psychologists')),
+  adminLinkPsychologist: async (childId: string, psychologistId: string) => {
+    mock.linkChildUser(childId, psychologistId, 'psychologists');
+    return delay({ ok: true as const });
+  },
+  adminUnlinkPsychologist: async (childId: string, psychologistId: string) => {
+    mock.unlinkChildUser(childId, psychologistId, 'psychologists');
+    return delay({ ok: true as const });
+  },
+
+  adminListChildTeachers: async (childId: string) =>
+    delay(mock.listChildLinks(childId, 'teachers').map(({ id, name, email, phone }) => ({ id, name, email, phone }))),
+  adminLinkTeacher: async (childId: string, teacherId: string) => {
+    mock.linkChildUser(childId, teacherId, 'teachers');
+    return delay({ ok: true as const });
+  },
+  adminUnlinkTeacher: async (childId: string, teacherId: string) => {
+    mock.unlinkChildUser(childId, teacherId, 'teachers');
+    return delay({ ok: true as const });
+  },
+
+  // ───── admin: permission requests ─────
+  adminListPermissionRequests: async (status?: 'pending' | 'approved' | 'denied') =>
+    delay(mock.listPermissionRequests(status)),
+  adminResolvePermissionRequest: async (id: string, body: { status: 'approved' | 'denied'; resolved_note?: string }) => {
+    mock.resolvePermissionRequest(id, body.status, body.resolved_note);
+    return delay({ ok: true as const });
+  },
+
+  // ───── teacher: permission requests ─────
+  teacherListPermissionRequests: async () =>
+    delay(mock.listPermissionRequests().map((r) => ({
+      id: r.id, child_id: r.child_id, child_name: r.child_name, scope: r.scope,
+      status: r.status, requested_at: r.requested_at,
+      resolved_at: r.resolved_at, resolved_note: r.resolved_note,
+    }))),
+  teacherCreatePermissionRequest: async (_body: { child_id: string; scope: 'helper_chats' | 'alerts' | 'sessions' | 'missions' | 'full'; reason?: string }) =>
+    delay({ id: `pr-${Date.now()}` }),
 };
+
+// Canned reply for the clinical assistant chat (no LLM in the demo).
+function canned(input: string): string {
+  const q = input.toLowerCase();
+  if (q.includes('yoav')) return 'Yoav had a high-priority bullying alert ~3 hours ago. His sentiment has been trending down for the past three days. His mother was contacted by Dr. Klein the same day. Worth a one-on-one this week.';
+  if (q.includes('maya')) return 'Maya logged a medium-severity distress message yesterday — "I just feel sad all the time and nothing helps." It\'s a one-week mood change. Consider a check-in and review with her teacher.';
+  if (q.includes('daniel')) return 'Daniel\'s self-harm flag from 3 days ago is resolved — parent contacted, emergency session held, safety plan in place. Continue weekly cadence.';
+  if (q.includes('risk') || q.includes('priority')) return 'Right now: Yoav (78 — bullying flag, active), Daniel (65 — in treatment, post-incident), Maya (55 — emerging distress). Yoav is the most time-sensitive.';
+  return 'I can summarize a specific child\'s status, surface trending risks, or pull recent helper-chat themes. Try asking about Yoav, Maya, or Daniel, or about priorities for this week.';
+}
 
 export interface AlertStreamEvent {
   type: 'new_alert';
@@ -310,38 +355,36 @@ export interface AlertStreamEvent {
   created_at: string;
 }
 
+// Fires one synthetic alert ~20s after the dashboard mounts so judges see the live-alert flow.
+// Also appends the alert to mockState so it shows in lists when navigated to.
 export async function openAlertStream(onEvent: (e: AlertStreamEvent) => void): Promise<() => void> {
   const token = getToken();
   if (!token) return () => {};
-  let src: EventSource | null = null;
-  let closed = false;
 
-  async function connect() {
-    if (closed) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/stream/ticket`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'ngrok-skip-browser-warning': 'true',
-        },
-      });
-      if (!res.ok) return;
-      const { ticket } = (await res.json()) as { ticket: string };
-      src = new EventSource(`${API_BASE}/api/stream/alerts?ticket=${encodeURIComponent(ticket)}`);
-      src.onmessage = (m) => {
-        try { onEvent(JSON.parse(m.data)); } catch { /* noop */ }
-      };
-      src.onerror = () => {
-        src?.close();
-        src = null;
-        if (!closed) setTimeout(connect, 5000);
-      };
-    } catch {
-      if (!closed) setTimeout(connect, 5000);
-    }
-  }
+  let cancelled = false;
+  const t = setTimeout(() => {
+    if (cancelled) return;
+    const alertId = `alert-live-${Date.now()}`;
+    const childId = 'child-dana';
+    const child = mock.mockState.children.find((c) => c.id === childId);
+    const child_name = child?.display_name ?? 'Dana Levi';
+    const excerpt = "i'm really nervous about the presentation on monday";
+    mock.mockState.alerts.unshift({
+      id: alertId, child_id: childId, session_id: null,
+      priority: 'medium', type: 'severe_anxiety',
+      excerpt, context: 'Helper chat — Dana surfaced rising anxiety about her upcoming class presentation.',
+      created_at: new Date().toISOString(),
+      acknowledged_at: null, acknowledged_by: null,
+      action_taken: null, action_note: null,
+      child_name,
+    });
+    onEvent({
+      type: 'new_alert', priority: 'medium',
+      child_id: childId, child_name,
+      excerpt, alert_id: alertId,
+      created_at: new Date().toISOString(),
+    });
+  }, 20_000);
 
-  await connect();
-  return () => { closed = true; src?.close(); };
+  return () => { cancelled = true; clearTimeout(t); };
 }

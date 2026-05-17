@@ -5,6 +5,7 @@ import { AlertCircle, Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth, type OtpChallenge } from '../lib/auth';
 import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { BrandWordmark } from '../components/Brand';
+import { DEMO_CREDENTIALS_LIST } from '../lib/mockData';
 
 export function LoginPage() {
   const { login, verifyOtp } = useAuth();
@@ -190,6 +191,24 @@ export function LoginPage() {
           >
             {loading ? t('auth.signingin') : t('auth.signin')}
           </button>
+
+          <div className="pt-2 border-t border-line/60">
+            <div className="text-[11px] uppercase tracking-wider text-muted mb-2">Demo accounts</div>
+            <div className="grid grid-cols-3 gap-2">
+              {DEMO_CREDENTIALS_LIST.map((c) => (
+                <button
+                  key={c.email}
+                  type="button"
+                  onClick={() => { setEmail(c.email); setPassword(c.password); setError(null); }}
+                  className="text-xs bg-ink border border-line hover:border-accent/60 hover:text-slate-100 text-muted rounded-md py-2 px-1.5 transition"
+                  title={`${c.email} / ${c.password}`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <div className="text-[10px] text-muted/70 mt-2">Click a role to autofill. Password: demo123.</div>
+          </div>
 
         </form>
       </div>
